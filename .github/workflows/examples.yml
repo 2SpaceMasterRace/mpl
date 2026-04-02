@@ -1,0 +1,68 @@
+name: Examples
+
+on:
+  push:
+    branches: [ "main" ]
+    paths:
+      - ".github/workflows/examples.yml"
+      - "examples/**"
+      - "basis-library/**"
+      - "mlton/**"
+      - "runtime/**"
+      - "include/**"
+      - "Makefile"
+      - "Makefile.config"
+      - "default.nix"
+      - "Dockerfile.amd64"
+      - "Dockerfile.arm64"
+      - "docker-bake.hcl"
+  pull_request:
+    branches: [ "main" ]
+    paths:
+      - ".github/workflows/examples.yml"
+      - "examples/**"
+      - "basis-library/**"
+      - "mlton/**"
+      - "runtime/**"
+      - "include/**"
+      - "Makefile"
+      - "Makefile.config"
+      - "default.nix"
+      - "Dockerfile.amd64"
+      - "Dockerfile.arm64"
+      - "docker-bake.hcl"
+
+jobs:
+  build-and-run-examples:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y mlton libgmp-dev gcc make
+
+      - name: Build MPL compiler
+        run: make --silent
+
+      - name: Build examples
+        run: make -C examples --silent
+
+      - name: Run examples smoke tests
+        run: |
+          set -euo pipefail
+          cd examples
+
+          ./bin/fib -N 20
+          ./bin/random -N 1000 -seed 1
+          ./bin/primes -N 10000
+          ./bin/msort -N 20000
+          ./bin/dmm -N 16
+          ./bin/ray -m 32 -n 32 -s rgbbox
+          ./bin/nn -N 500
+          ./bin/nqueens -N 10
+          ./bin/coins -N 100 -repeat 1
