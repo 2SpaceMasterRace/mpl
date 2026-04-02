@@ -58,16 +58,12 @@ jobs:
           cd examples
 
           # Strip timing information from program output.
-          # Removes "finished in X.XXXXs" and similar timing substrings,
+          # Removes "... in X.XXXXs" and "Finished in: X.XXXXs" substrings,
           # then removes any resulting blank lines.
           strip_timing() {
             sed -E \
               -e 's/[Ff]inished in:? [0-9]+\.[0-9]+s\.?//g' \
-              -e 's/Scene BVH construction in [0-9]+\.[0-9]+s\.?//g' \
-              -e 's/Rendering in [0-9]+\.[0-9]+s\.?//g' \
-              -e 's/generated input in [0-9]+\.[0-9]+s//g' \
-              -e 's/built quadtree in [0-9]+\.[0-9]+s//g' \
-              -e 's/found all neighbors in [0-9]+\.[0-9]+s//g' \
+              -e 's/ in [0-9]+\.[0-9]+s\.?//g' \
               -e 's/[[:space:]]+$//' \
             | sed '/^$/d'
           }
@@ -98,6 +94,10 @@ jobs:
           check_output nn      ./bin/nn -N 500
           check_output nqueens ./bin/nqueens -N 10
           check_output coins   ./bin/coins -N 100 -repeat 1
+          check_output tokens  ./bin/tokens expected/input.txt
+          check_output dedup   ./bin/dedup expected/input.txt
+          check_output seam-carve bash -c './bin/seam-carve ray_result.ppm -num-seams 5 -output seam_result.gif && echo "seam_result.gif checksum: $(md5sum seam_result.gif | cut -d" " -f1)"'
+          check_output reverb  bash -c './bin/reverb expected/test.wav -output reverb_result.wav && echo "reverb_result.wav checksum: $(md5sum reverb_result.wav | cut -d" " -f1)"'
 
           if [ "$fail" -ne 0 ]; then
             echo "Some output checks failed!"
