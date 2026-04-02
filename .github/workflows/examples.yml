@@ -46,7 +46,15 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y mlton libgmp-dev gcc make
 
+      - name: Cache MPL compiler
+        id: cache-mpl
+        uses: actions/cache@v4
+        with:
+          path: build
+          key: mpl-${{ runner.os }}-${{ hashFiles('mlton/**', 'runtime/**', 'include/**', 'basis-library/**', 'Makefile', 'Makefile.config') }}
+
       - name: Build MPL compiler
+        if: steps.cache-mpl.outputs.cache-hit != 'true'
         run: make --silent
 
       - name: Build examples
