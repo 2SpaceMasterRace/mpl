@@ -392,17 +392,8 @@ static void localFreeBlocks(GC_state s, SuperBlock sb, FreeBlock b) {
 
 static void clearOutOtherFrees(GC_state s) {
   BlockAllocator local = s->blockAllocatorLocal;
-  FreeBlock topElem = local->firstFreedByOther;
-
-  if (NULL != topElem) {
-    while (TRUE) {
-      if (__sync_bool_compare_and_swap(&(local->firstFreedByOther), topElem, NULL))
-        break;
-      topElem = local->firstFreedByOther;
-    }
-  }
-
   size_t numFreed = 0;
+  FreeBlock topElem = atomic_exchange(&local->firstFreedByOther, NULL); // claim entire list
 
   while (topElem != NULL) {
     FreeBlock next = topElem->nextFree;
@@ -667,12 +658,12 @@ void freeBlocks(GC_state s, Blocks bs, writeFreedBlockInfoFnClosure f) {
   }
 
   /** Otherwise, enqueue for the other proc to handle. */
-  while (TRUE) {
-    FreeBlock oldVal = owner->firstFreedByOther;
-    elem->nextFree = oldVal;
-    if (__sync_bool_compare_and_swap(&(owner->firstFreedByOther), oldVal, elem))
-      break;
-  }
+  elem->nextFree = atomic_load_explicit(&owner->firstFreedByOther, memory_order_relaxed);
+  while (!atomic_compare_exchange_weak_explicit(&owner->firstFreedByOther,
+                                                &elem->nextFree,
+                                                elem,
+                                                memory_order_acq_rel,
+                                                memory_order_relaxed)) {}
 }
 
 

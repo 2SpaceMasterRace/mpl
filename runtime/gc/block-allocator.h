@@ -10,6 +10,7 @@
   * Paul R. Wilson. Hoard: A Scalable Memory Allocator for Multithreaded
   * Applications. ASPLOS 2000.
   */
+#include <stdatomic.h>
 
 #ifndef BLOCK_ALLOCATOR_H_
 #define BLOCK_ALLOCATOR_H_
@@ -60,7 +61,7 @@ typedef struct DebugKeptFreeBlock {
 
 /** Free blocks are used to the store the freelist. */
 typedef struct FreeBlock {
-  struct FreeBlock *nextFree;
+  _Atomic(struct FreeBlock *)nextFree; // atomic pointer to FreeBlock
   struct SuperBlock *container;
   enum BlockPurpose purpose;
 } *FreeBlock;
@@ -137,7 +138,6 @@ enum FullnessGroup {
   COMPLETELY_EMPTY = 4
 };
 
-
 typedef struct BlockAllocator {
 
   size_t numBlocksMapped;
@@ -162,7 +162,7 @@ typedef struct BlockAllocator {
     * other proc). To make the concurrency simpler, these blocks are enqueued
     * for this proc and then this proc may free them at its convenience.
     */
-  FreeBlock firstFreedByOther;
+  _Atomic(struct FreeBlock *)firstFreedByOther;
 
   /** Only used in the global allocator (always NULL in the local allocators).
     */
