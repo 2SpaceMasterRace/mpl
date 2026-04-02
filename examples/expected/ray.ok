@@ -1,3 +1,5 @@
 Using scene 'rgbbox' (-s to switch).
+Scene BVH construction
+Rendering
 Writing image to ray_result.ppm.
 ray_result.ppm checksum: 032cf4f851743a2aca85dd662551330e
