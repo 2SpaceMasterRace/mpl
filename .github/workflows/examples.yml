@@ -57,12 +57,49 @@ jobs:
           set -euo pipefail
           cd examples
 
-          ./bin/fib -N 20
-          ./bin/random -N 1000 -seed 1
-          ./bin/primes -N 10000
-          ./bin/msort -N 20000
-          ./bin/dmm -N 16
-          ./bin/ray -m 32 -n 32 -s rgbbox
-          ./bin/nn -N 500
-          ./bin/nqueens -N 10
-          ./bin/coins -N 100 -repeat 1
+          # Strip timing information from program output.
+          # Removes "finished in X.XXXXs" and similar timing substrings,
+          # then removes any resulting blank lines.
+          strip_timing() {
+            sed -E \
+              -e 's/[Ff]inished in:? [0-9]+\.[0-9]+s\.?//g' \
+              -e 's/Scene BVH construction in [0-9]+\.[0-9]+s\.?//g' \
+              -e 's/Rendering in [0-9]+\.[0-9]+s\.?//g' \
+              -e 's/generated input in [0-9]+\.[0-9]+s//g' \
+              -e 's/built quadtree in [0-9]+\.[0-9]+s//g' \
+              -e 's/found all neighbors in [0-9]+\.[0-9]+s//g' \
+              -e 's/[[:space:]]+$//' \
+            | sed '/^$/d'
+          }
+
+          fail=0
+          check_output() {
+            local name="$1"
+            shift
+            local actual
+            actual=$("$@" 2>&1 | strip_timing)
+            local expected
+            expected=$(cat "expected/${name}.ok")
+            if [ "$actual" != "$expected" ]; then
+              echo "FAIL: $name"
+              diff <(echo "$actual") <(echo "$expected") || true
+              fail=1
+            else
+              echo "PASS: $name"
+            fi
+          }
+
+          check_output fib     ./bin/fib -N 20
+          check_output random  ./bin/random -N 1000 -seed 1
+          check_output primes  ./bin/primes -N 10000
+          check_output msort   ./bin/msort -N 20000
+          check_output dmm     ./bin/dmm -N 16
+          check_output ray     bash -c './bin/ray -m 32 -n 32 -s rgbbox -f ray_result.ppm && echo "ray_result.ppm checksum: $(md5sum ray_result.ppm | cut -d" " -f1)"'
+          check_output nn      ./bin/nn -N 500
+          check_output nqueens ./bin/nqueens -N 10
+          check_output coins   ./bin/coins -N 100 -repeat 1
+
+          if [ "$fail" -ne 0 ]; then
+            echo "Some output checks failed!"
+            exit 1
+          fi
