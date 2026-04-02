@@ -25,6 +25,7 @@ val _ = print ("built quadtree in " ^ Time.fmt 4 tm ^ "s\n")
 
 val (nbrs, tm) = Util.getTime (fn _ => NN.allNearestNeighbors grain tree)
 val _ = print ("found all neighbors in " ^ Time.fmt 4 tm ^ "s\n")
+val _ = print ("result " ^ Util.summarizeArraySlice 4 Int.toString nbrs ^ "\n")
 
 (* now input[nbrs[i]] is the closest point to input[i] *)
 

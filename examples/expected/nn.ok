@@ -1,3 +1,7 @@
 N 500
+generated input
+built quadtree
+found all neighbors
+result [359, 396, 463, ..., 340]
 to see output, use -output and -resolution arguments
 for example: nn -N 10000 -output result.ppm -resolution 1000
