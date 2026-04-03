@@ -58,9 +58,9 @@ static inline SuperBlockList getFullnessGroup(
   assert(0 <= class && (size_t)class < s->controls->superblockThreshold);
 
   if (fg == COMPLETELY_EMPTY)
-    return &(ball->completelyEmptyGroup);
+    return &(ball->shared.completelyEmptyGroup);
 
-  return &(ball->sizeClassFullnessGroup[class * NUM_FULLNESS_GROUPS + fg]);
+  return &(ball->shared.sizeClassFullnessGroup[class * NUM_FULLNESS_GROUPS + fg]);
 }
 
 
@@ -132,32 +132,35 @@ static void assertBlockAllocatorOkay(GC_state s, BlockAllocator ball) {
 
 #endif
 
+static void initBlockAllocatorShared(GC_state s, SubBlocks *shared) {
+  *shared = (SubBlocks){0};
 
-static void initBlockAllocator(GC_state s, BlockAllocator ball) {
+  shared->sizeClassFullnessGroup =
+    malloc(s->controls->superblockThreshold * NUM_FULLNESS_GROUPS * sizeof(struct SuperBlockList));
+  for (size_t i = 0; i < s->controls->superblockThreshold; i++) {
+    for (int j = 0; j < NUM_FULLNESS_GROUPS; j++) {
+      shared->sizeClassFullnessGroup[i * NUM_FULLNESS_GROUPS + j].firstSuperBlock = NULL;
+    }
+  }
+  shared->completelyEmptyGroup.firstSuperBlock = NULL;
+}
+
+
+static void initBlockAllocatorLocal(GC_state s, BlockAllocator ball) {
+  *ball = (struct BlockAllocator){0};
+  initBlockAllocatorShared(s, &(ball->shared));
+}
+
+
+static void initBlockAllocatorGlobal(GC_state s, GlobalBlockAllocator ball) {
   size_t numMegaBlockSizeClasses =
     s->controls->megablockThreshold - s->controls->superblockThreshold;
 
-  ball->sizeClassFullnessGroup =
-    malloc(s->controls->superblockThreshold * NUM_FULLNESS_GROUPS * sizeof(struct SuperBlockList));
+  *ball = (struct GlobalBlockAllocator){0};
+  initBlockAllocatorShared(s, &(ball->shared));
+
   ball->megaBlockSizeClass =
     malloc(numMegaBlockSizeClasses * sizeof(struct MegaBlockList));
-
-  for (size_t i = 0; i < s->controls->superblockThreshold; i++) {
-    for (int j = 0; j < NUM_FULLNESS_GROUPS; j++) {
-      getFullnessGroup(s, ball, i, j)->firstSuperBlock = NULL;
-    }
-  }
-
-  ball->completelyEmptyGroup.firstSuperBlock = NULL;
-
-  ball->firstFreedByOther = NULL;
-  ball->numBlocksMapped = 0;
-  ball->numBlocksReleased = 0;
-  for (enum BlockPurpose p = 0; p < NUM_BLOCK_PURPOSES; p++) {
-    ball->numBlocksAllocated[p] = 0;
-    ball->numBlocksFreed[p] = 0;
-  }
-
   for (size_t i = 0; i < numMegaBlockSizeClasses; i++) {
     ball->megaBlockSizeClass[i].firstMegaBlock = NULL;
   }
@@ -165,18 +168,17 @@ static void initBlockAllocator(GC_state s, BlockAllocator ball) {
 }
 
 
-BlockAllocator initGlobalBlockAllocator(GC_state s) {
-  s->blockAllocatorGlobal = malloc(sizeof(struct BlockAllocator));
-  initBlockAllocator(s, s->blockAllocatorGlobal);
+GlobalBlockAllocator initGlobalBlockAllocator(GC_state s) {
+  s->blockAllocatorGlobal = malloc(sizeof(struct GlobalBlockAllocator));
+  initBlockAllocatorGlobal(s, s->blockAllocatorGlobal);
   return s->blockAllocatorGlobal;
 }
 
 
-void initLocalBlockAllocator(GC_state s, BlockAllocator globalBall) {
-  // s->controls->blockSize;
+void initLocalBlockAllocator(GC_state s, GlobalBlockAllocator globalBall) {
   s->blockAllocatorGlobal = globalBall;
   s->blockAllocatorLocal = malloc(sizeof(struct BlockAllocator));
-  initBlockAllocator(s, s->blockAllocatorLocal);
+  initBlockAllocatorLocal(s, s->blockAllocatorLocal);
 }
 
 
@@ -393,7 +395,7 @@ static void localFreeBlocks(GC_state s, SuperBlock sb, FreeBlock b) {
 static void clearOutOtherFrees(GC_state s) {
   BlockAllocator local = s->blockAllocatorLocal;
   size_t numFreed = 0;
-  FreeBlock topElem = atomic_exchange(&local->firstFreedByOther, NULL); // claim entire list
+  FreeBlock topElem = atomic_exchange(&local->shared.firstFreedByOther, NULL); // claim entire list
 
   while (topElem != NULL) {
     FreeBlock next = topElem->nextFree;
@@ -414,7 +416,7 @@ static void clearOutOtherFrees(GC_state s) {
 
 
 static void freeMegaBlock(GC_state s, MegaBlock mb, size_t sizeClass) {
-  BlockAllocator global = s->blockAllocatorGlobal;
+  GlobalBlockAllocator global = s->blockAllocatorGlobal;
   size_t nb = mb->numBlocks;
   enum BlockPurpose purpose = mb->purpose;
 
@@ -429,8 +431,8 @@ static void freeMegaBlock(GC_state s, MegaBlock mb, size_t sizeClass) {
       nb,
       (size_t)1 << (s->controls->megablockThreshold - 1));
       
-    __sync_fetch_and_add(&(global->numBlocksFreed[purpose]), nb);
-    __sync_fetch_and_add(&(global->numBlocksReleased), nb);
+    atomic_fetch_add_explicit(&(global->numBlocksFreed[purpose]), nb, memory_order_relaxed);
+    atomic_fetch_add_explicit(&(global->numBlocksReleased), nb, memory_order_relaxed);
     return;
   }
 
@@ -441,7 +443,7 @@ static void freeMegaBlock(GC_state s, MegaBlock mb, size_t sizeClass) {
   global->megaBlockSizeClass[mbClass].firstMegaBlock = mb;
   pthread_mutex_unlock(&(global->megaBlockLock));
 
-  __sync_fetch_and_add(&(global->numBlocksFreed[purpose]), nb);
+  atomic_fetch_add_explicit(&(global->numBlocksFreed[purpose]), nb, memory_order_relaxed);
   return;
 }
 
@@ -452,7 +454,7 @@ static MegaBlock tryFindMegaBlock(
   size_t sizeClass,
   enum BlockPurpose purpose)
 {
-  BlockAllocator global = s->blockAllocatorGlobal;
+  GlobalBlockAllocator global = s->blockAllocatorGlobal;
   assert(sizeClass >= s->controls->superblockThreshold);
 
   if (sizeClass >= s->controls->megablockThreshold)
@@ -480,7 +482,7 @@ static MegaBlock tryFindMegaBlock(
         mb->nextMegaBlock = NULL;
         pthread_mutex_unlock(&(global->megaBlockLock));
 
-        __sync_fetch_and_add(&(global->numBlocksAllocated[purpose]), mb->numBlocks);
+        atomic_fetch_add_explicit(&(global->numBlocksAllocated[purpose]), mb->numBlocks, memory_order_relaxed);
 
         LOG(LM_CHUNK_POOL, LL_INFO,
           "inspected %zu, satisfied large alloc of %zu blocks using megablock of %zu",
@@ -508,9 +510,9 @@ static MegaBlock mmapNewMegaBlock(GC_state s, size_t numBlocks, enum BlockPurpos
     DIE("whoops, mmap didn't align by the block-size.");
   }
 
-  BlockAllocator global = s->blockAllocatorGlobal;
-  __sync_fetch_and_add(&(global->numBlocksMapped), numBlocks);
-  __sync_fetch_and_add(&(global->numBlocksAllocated[purpose]), numBlocks);
+  GlobalBlockAllocator global = s->blockAllocatorGlobal;
+  atomic_fetch_add_explicit(&(global->numBlocksMapped), numBlocks, memory_order_relaxed);
+  atomic_fetch_add_explicit(&(global->numBlocksAllocated[purpose]), numBlocks, memory_order_relaxed);
 
   MegaBlock mb = (MegaBlock)start;
   mb->numBlocks = numBlocks;
@@ -658,8 +660,8 @@ void freeBlocks(GC_state s, Blocks bs, writeFreedBlockInfoFnClosure f) {
   }
 
   /** Otherwise, enqueue for the other proc to handle. */
-  elem->nextFree = atomic_load_explicit(&owner->firstFreedByOther, memory_order_relaxed);
-  while (!atomic_compare_exchange_weak_explicit(&owner->firstFreedByOther,
+  elem->nextFree = atomic_load_explicit(&owner->shared.firstFreedByOther, memory_order_relaxed);
+  while (!atomic_compare_exchange_weak_explicit(&owner->shared.firstFreedByOther,
                                                 &elem->nextFree,
                                                 elem,
                                                 memory_order_acq_rel,
@@ -697,16 +699,18 @@ void queryCurrentBlockUsage(
   }
 
   // query global allocator
-  BlockAllocator global = s->blockAllocatorGlobal;
-  *numBlocksMapped += global->numBlocksMapped;
-  *numBlocksReleased += global->numBlocksReleased;
+  GlobalBlockAllocator global = s->blockAllocatorGlobal;
+  size_t globalMapped = atomic_load_explicit(&(global->numBlocksMapped), memory_order_relaxed);
+  size_t globalReleased = atomic_load_explicit(&(global->numBlocksReleased), memory_order_relaxed);
+  *numBlocksMapped += globalMapped;
+  *numBlocksReleased += globalReleased;
   for (enum BlockPurpose p = 0; p < NUM_BLOCK_PURPOSES; p++) {
-    numBlocksAllocated[p] += global->numBlocksAllocated[p];
-    numBlocksFreed[p] += global->numBlocksFreed[p];
+    numBlocksAllocated[p] += atomic_load_explicit(&(global->numBlocksAllocated[p]), memory_order_relaxed);
+    numBlocksFreed[p] += atomic_load_explicit(&(global->numBlocksFreed[p]), memory_order_relaxed);
   }
 
-  *numGlobalBlocksMapped += global->numBlocksMapped;
-  *numGlobalBlocksReleased += global->numBlocksReleased;
+  *numGlobalBlocksMapped += globalMapped;
+  *numGlobalBlocksReleased += globalReleased;
 }
 
 

@@ -68,6 +68,7 @@ typedef struct FreeBlock {
 
 
 struct BlockAllocator;
+struct GlobalBlockAllocator;
 
 
 typedef struct SuperBlock {
@@ -138,8 +139,13 @@ enum FullnessGroup {
   COMPLETELY_EMPTY = 4
 };
 
-typedef struct BlockAllocator {
+typedef struct SubBlocks {
+  struct SuperBlockList *sizeClassFullnessGroup;
+  struct SuperBlockList completelyEmptyGroup;
+  _Atomic(struct FreeBlock *)firstFreedByOther;
+} SubBlocks;
 
+typedef struct BlockAllocator {
   size_t numBlocksMapped;
   size_t numBlocksReleased;
   size_t numBlocksAllocated[NUM_BLOCK_PURPOSES];
@@ -151,25 +157,22 @@ typedef struct BlockAllocator {
     *   2 is neither nearly full nor nearly empty
     *   3 is nearly empty, i.e. less than emptinessFraction in use
     */
-  struct SuperBlockList *sizeClassFullnessGroup;
-
-  /** Completely empty superblocks are special because these can be
-    * reused for any size class.
-    */
-  struct SuperBlockList completelyEmptyGroup;
-
-  /** Concurrent freelist (blocks owned by this proc that were freed by some
-    * other proc). To make the concurrency simpler, these blocks are enqueued
-    * for this proc and then this proc may free them at its convenience.
-    */
-  _Atomic(struct FreeBlock *)firstFreedByOther;
-
-  /** Only used in the global allocator (always NULL in the local allocators).
-    */
-  struct MegaBlockList *megaBlockSizeClass;
-  pthread_mutex_t megaBlockLock;
+  SubBlocks shared;
 
 } *BlockAllocator;
+
+
+typedef struct GlobalBlockAllocator {
+  atomic_size_t numBlocksMapped;
+  atomic_size_t numBlocksReleased;
+  atomic_size_t numBlocksAllocated[NUM_BLOCK_PURPOSES];
+  atomic_size_t numBlocksFreed[NUM_BLOCK_PURPOSES];
+
+  SubBlocks shared;
+
+  struct MegaBlockList *megaBlockSizeClass;
+  pthread_mutex_t megaBlockLock;
+} *GlobalBlockAllocator;
 
 
 typedef struct Blocks {
@@ -181,7 +184,9 @@ typedef struct Blocks {
 #else
 
 struct BlockAllocator;
+struct GlobalBlockAllocator;
 typedef struct BlockAllocator * BlockAllocator;
+typedef struct GlobalBlockAllocator * GlobalBlockAllocator;
 
 #endif // MLTON_GC_INTERNAL_TYPES
 
@@ -189,8 +194,8 @@ typedef struct BlockAllocator * BlockAllocator;
 
 #if (defined (MLTON_GC_INTERNAL_FUNCS))
 
-BlockAllocator initGlobalBlockAllocator(GC_state s);
-void initLocalBlockAllocator(GC_state s, BlockAllocator globalAllocator);
+GlobalBlockAllocator initGlobalBlockAllocator(GC_state s);
+void initLocalBlockAllocator(GC_state s, GlobalBlockAllocator globalAllocator);
 
 /** Get a pointer to the start of some number of free contiguous blocks. */
 Blocks allocateBlocks(GC_state s, size_t numBlocks);
