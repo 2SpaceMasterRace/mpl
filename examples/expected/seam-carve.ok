@@ -1,0 +1,11 @@
+block-width 80
+num-seams 5
+read image
+height 32
+width 32
+seam carving...
+computed seam carving index
+remapped color palette
+generated images
+wrote to seam_result.gif
+seam_result.gif checksum: 6e1699d1291f5e1b0438a5df4495575e

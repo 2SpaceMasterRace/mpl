@@ -1,0 +1,3 @@
+tabulate 1000 pseudo-random 64-bit words
+seed 1
+result [AE5DE3C06E3E5C7A, 9B3DDF966C314FED, ..., D1BFFB87661C5706]

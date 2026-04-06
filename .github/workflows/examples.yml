@@ -1,0 +1,113 @@
+name: Examples
+
+on:
+  push:
+    branches: [ "main" ]
+    paths:
+      - ".github/workflows/examples.yml"
+      - "examples/**"
+      - "basis-library/**"
+      - "mlton/**"
+      - "runtime/**"
+      - "include/**"
+      - "Makefile"
+      - "Makefile.config"
+      - "default.nix"
+      - "Dockerfile.amd64"
+      - "Dockerfile.arm64"
+      - "docker-bake.hcl"
+  pull_request:
+    branches: [ "main" ]
+    paths:
+      - ".github/workflows/examples.yml"
+      - "examples/**"
+      - "basis-library/**"
+      - "mlton/**"
+      - "runtime/**"
+      - "include/**"
+      - "Makefile"
+      - "Makefile.config"
+      - "default.nix"
+      - "Dockerfile.amd64"
+      - "Dockerfile.arm64"
+      - "docker-bake.hcl"
+
+jobs:
+  build-and-run-examples:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y mlton libgmp-dev gcc make
+
+      - name: Cache MPL compiler
+        id: cache-mpl
+        uses: actions/cache@v4
+        with:
+          path: build
+          key: mpl-${{ runner.os }}-${{ hashFiles('mlton/**', 'runtime/**', 'include/**', 'basis-library/**', 'Makefile', 'Makefile.config') }}
+
+      - name: Build MPL compiler
+        if: steps.cache-mpl.outputs.cache-hit != 'true'
+        run: make --silent
+
+      - name: Build examples
+        run: make -C examples --silent
+
+      - name: Run examples smoke tests
+        run: |
+          set -euo pipefail
+          cd examples
+
+          # Strip timing information from program output.
+          # Removes "... in X.XXXXs" and "Finished in: X.XXXXs" substrings,
+          # then removes any resulting blank lines.
+          strip_timing() {
+            sed -E \
+              -e 's/[Ff]inished in:? [0-9]+\.[0-9]+s\.?//g' \
+              -e 's/ in [0-9]+\.[0-9]+s\.?//g' \
+              -e 's/[[:space:]]+$//' \
+            | sed '/^$/d'
+          }
+
+          fail=0
+          check_output() {
+            local name="$1"
+            shift
+            local actual
+            actual=$("$@" 2>&1 | strip_timing)
+            local expected
+            expected=$(cat "expected/${name}.ok")
+            if [ "$actual" != "$expected" ]; then
+              echo "FAIL: $name"
+              diff <(echo "$actual") <(echo "$expected") || true
+              fail=1
+            else
+              echo "PASS: $name"
+            fi
+          }
+
+          check_output fib     ./bin/fib -N 20
+          check_output random  ./bin/random -N 1000 -seed 1
+          check_output primes  ./bin/primes -N 10000
+          check_output msort   ./bin/msort -N 20000
+          check_output dmm     ./bin/dmm -N 16
+          check_output ray     bash -c './bin/ray -m 32 -n 32 -s rgbbox -f ray_result.ppm && echo "ray_result.ppm checksum: $(md5sum ray_result.ppm | cut -d" " -f1)"'
+          check_output nn      ./bin/nn -N 500
+          check_output nqueens ./bin/nqueens -N 10
+          check_output coins   ./bin/coins -N 100 -repeat 1
+          check_output tokens  ./bin/tokens expected/input.txt
+          check_output dedup   ./bin/dedup expected/input.txt
+          check_output seam-carve bash -c './bin/seam-carve ray_result.ppm -num-seams 5 -output seam_result.gif && echo "seam_result.gif checksum: $(md5sum seam_result.gif | cut -d" " -f1)"'
+          check_output reverb  bash -c './bin/reverb expected/test.wav -output reverb_result.wav && echo "reverb_result.wav checksum: $(md5sum reverb_result.wav | cut -d" " -f1)"'
+
+          if [ "$fail" -ne 0 ]; then
+            echo "Some output checks failed!"
+            exit 1
+          fi

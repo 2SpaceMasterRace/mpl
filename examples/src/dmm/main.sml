@@ -13,3 +13,6 @@ val _ = print ("multiplying\n")
 val (result, tm) = Util.getTime (fn _ => TreeMatrix.multiply (input, input))
 
 val _ = print ("finished in " ^ Time.fmt 4 tm ^ "s\n")
+
+val flat = TreeMatrix.flatten result
+val _ = print ("result " ^ Util.summarizeArray 4 (Real.fmt (StringCvt.FIX (SOME 1))) flat ^ "\n")
