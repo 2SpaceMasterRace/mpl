@@ -34,7 +34,7 @@ struct GC_state {
   char **atMLtons; /* Initial @MLton args, processed before command line. */
   int atMLtonsLength;
   volatile uint32_t atomicState;
-  struct BlockAllocator *blockAllocatorGlobal;
+  struct GlobalBlockAllocator *blockAllocatorGlobal;
   struct BlockAllocator *blockAllocatorLocal;
   struct Sampler *blockUsageSampler;
   objptr callFromCHandlerThread; /* Handler for exported C calls (in heap). */
